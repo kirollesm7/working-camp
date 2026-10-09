@@ -11,6 +11,8 @@ extra is written to disk. Only the trained weights are saved.
 
     python train_cnn.py            # up to 20 epochs (stops early when it stops improving)
     python train_cnn.py 30         # allow more epochs
+    python train_cnn.py tune 4     # carry on from the current model for a few
+                                   # epochs (after learning new real digits)
 
 Restart the clothes server afterwards to use the new model.
 """
@@ -51,10 +53,34 @@ def user_digits():
     return imgs, labels
 
 
-def distort(img, rng):
+def hook_one(img, rng):
+    """Many people write 1 with a flag on top (and sometimes a foot). MNIST
+    has few of those, so the reader took them for 4, 7 or 9. Draw the flag
+    onto a plain MNIST 1."""
+    ys, xs = np.nonzero(img > 100)
+    if not len(ys):
+        return img
+    g = img.copy()
+    top = ys.min()
+    x0 = int(xs[ys <= top + 1].mean())
+    t = int(rng.integers(2, 4))
+    dx = int(rng.integers(3, 7))
+    dy = max(2, int(round(dx * rng.uniform(0.8, 1.4))))     # steep, not a 7's bar
+    cv2.line(g, (x0, top), (max(0, x0 - dx), min(27, top + dy)), 255, t)
+    if rng.random() < 0.25:                    # a foot under the 1
+        bot = ys.max()
+        xb = int(xs[ys >= bot - 1].mean())
+        w = int(rng.integers(3, 7))
+        cv2.line(g, (max(0, xb - w), bot), (min(27, xb + w), bot), 255, t)
+    return g
+
+
+def distort(img, rng, label=None):
     """One random camera/handwriting distortion of a 28x28 digit, then the
     same normalising the app uses when it reads a sticker."""
     g = img
+    if label == 1 and rng.random() < 0.5:
+        g = hook_one(g, rng)
     # pen thickness
     r = rng.random()
     if r < 0.25:
@@ -120,7 +146,11 @@ def real_validation(detector, cutter):
 
 
 def main():
-    max_epochs = int(sys.argv[1]) if len(sys.argv) > 1 else 20
+    args = sys.argv[1:]
+    tune = bool(args) and args[0] == "tune"
+    if tune:
+        args = args[1:]
+    max_epochs = int(args[0]) if args else (4 if tune else 20)
     patience = 3                               # early stopping
     cc.NORM_THIN = False                       # English handwriting mode
     rng = np.random.default_rng(int(time.time()))
@@ -155,14 +185,26 @@ def main():
 
     acc = lambda net, x, y: float((net.predict_proba(x).argmax(1) == y).mean())
 
-    net = CNN(seed=int(rng.integers(1 << 30)))
-    batch = 128
-    lr = 1e-3
-    best, best_ep, waited = -1.0, 0, 0
     out = cc.DATA_DIR / "cnn_english.npz"
+    batch = 128
+    best, best_ep, waited = -1.0, 0, 0
+    score = lambda hard, real: hard if np.isnan(real) else (hard + real) / 2
+    if tune:
+        # Fine-tune: start from the current model, smaller steps, a slice of
+        # MNIST each epoch so it doesn't forget, your real digits often.
+        start = out if out.exists() else cc.ASSETS / "cnn_english.npz"
+        net = CNN.load(start)
+        lr, per_epoch = 3e-4, 20000
+        a_h = acc(net, val_hard, val_hard_y)
+        a_r = acc(net, real_x, real_y) if real_y is not None else float("nan")
+        best = score(a_h, a_r)
+        print(f"start (from {start.name}): hard {a_h:.2%} | real {a_r:.2%}")
+    else:
+        net = CNN(seed=int(rng.integers(1 << 30)))
+        lr, per_epoch = 1e-3, len(tr_y)
     for ep in range(1, max_epochs + 1):
         t0 = time.time()
-        idx = np.concatenate([np.arange(len(tr_y)),
+        idx = np.concatenate([rng.choice(len(tr_y), per_epoch, replace=False),
                               -1 - np.repeat(np.arange(len(uy)), USER_REPEAT)])
         rng.shuffle(idx)
         losses = []
@@ -171,7 +213,7 @@ def main():
             imgs, ys = [], []
             for i in ids:
                 if i >= 0:
-                    imgs.append(distort(tr_x[i], rng)); ys.append(tr_y[i])
+                    imgs.append(distort(tr_x[i], rng, tr_y[i])); ys.append(tr_y[i])
                 else:
                     j = -1 - i
                     imgs.append(distort(ux[j], rng)); ys.append(uy[j])
@@ -185,8 +227,9 @@ def main():
         state = "OVERFITTING" if gap > 0.03 else ("underfitting" if a_train < 0.9 else "ok")
 
         note = ""
-        if a_hard > best:
-            best, best_ep, waited = a_hard, ep, 0
+        now = score(a_hard, a_real) if tune else a_hard
+        if now > best:
+            best, best_ep, waited = now, ep, 0
             net.save(out)
             note = "  (saved)"
         else:
@@ -199,7 +242,10 @@ def main():
         if waited >= patience:
             print(f"Early stop: no gain for {patience} epochs.")
             break
-    print(f"Best model: epoch {best_ep}, hard-test accuracy {best:.2%}. Saved to {out}")
+    if best_ep == 0:
+        print("No epoch beat the starting model — kept it.")
+    else:
+        print(f"Best model: epoch {best_ep}, score {best:.2%}. Saved to {out}")
     print("Restart the clothes server to use it.")
 
 
