@@ -1,0 +1,11 @@
+# Runtime data: sticker photos, counts, logs, learned handwriting,
+# the HTTPS private key, downloaded datasets and trained models
+data/
+app/data/
+
+# Python
+__pycache__/
+*.pyc
+
+# Windows shortcuts (they hold absolute paths of this PC)
+*.lnk

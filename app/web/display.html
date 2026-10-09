@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clothes Counter — Display</title>
+<link rel="icon" href="/assets/clothes_logo.png">
+<link rel="stylesheet" href="/web/style.css">
+<style>
+  html, body { height: 100%; overflow: hidden; cursor: none; }
+  .envelope { height: 100vh; padding: 1.2vw; border-width: 1.4vw; }
+  .inner {
+    height: 100%; min-height: 0; padding: 1.5vw 2.5vw;
+    display: flex; flex-direction: column;
+  }
+  header.brand img.logo { height: 9vh; }
+  header.brand img.stamp { height: 12vh; }
+  header.brand h1 { font-size: 5vh; }
+  header.brand .sub { font-size: 2.4vh; }
+
+  .main { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 3vh; }
+  .caption { text-align: center; font-size: 4.2vh; font-weight: 900; color: var(--ink-soft); }
+  .total {
+    text-align: center; font-weight: 900; line-height: 1;
+    font-size: 26vh; color: var(--red); transition: transform .25s;
+  }
+  .total small { font-size: 7vh; color: var(--ink); margin-inline-start: 1.5vw; }
+  .boxes { text-align: center; font-size: 4.5vh; font-weight: 900; }
+
+  .cats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.5vw; }
+  .cat {
+    background: #fff; border: 2px dashed var(--ink-soft); border-radius: 1.2vw;
+    text-align: center; padding: 1.6vh 0;
+  }
+  .cat .t { font-size: 3.6vh; font-weight: 900; color: var(--ink-soft); }
+  .cat .v { font-size: 11vh; font-weight: 900; line-height: 1.1; transition: transform .25s; }
+
+  .bump { transform: scale(1.08); }
+  .offline { position: fixed; bottom: 2vh; left: 2vw; font-weight: 900; color: var(--red); display: none; }
+</style>
+</head>
+<body>
+<div class="envelope"><div class="inner">
+  <header class="brand">
+    <img class="logo" src="/assets/clothes_logo.png" alt="">
+    <div>
+      <h1>Clothes Counter</h1>
+      <div class="sub">Working Camp 2026</div>
+    </div>
+    <img class="stamp" src="/assets/clothes_stamp.png" alt="Minho Walaho">
+  </header>
+
+  <div class="main">
+    <div class="caption">Pieces we have prepared</div>
+    <div class="total"><span id="pieces">0</span><small>pieces</small></div>
+    <div class="boxes"><span id="boxes">0</span> boxes</div>
+    <div class="cats">
+      <div class="cat"><div class="t">Boys</div><div class="v" id="boys" style="color:var(--blue)">0</div></div>
+      <div class="cat"><div class="t">Girls</div><div class="v" id="girls" style="color:var(--red)">0</div></div>
+      <div class="cat"><div class="t">Men</div><div class="v" id="men" style="color:var(--ink)">0</div></div>
+      <div class="cat"><div class="t">Women</div><div class="v" id="women" style="color:var(--green)">0</div></div>
+    </div>
+  </div>
+</div></div>
+<div class="offline" id="offline">No connection to the server</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const fmt = n => (+n || 0).toLocaleString("en");
+
+function set(id, value) {
+  const el = $(id), text = fmt(value);
+  if (el.textContent === text) return;
+  el.textContent = text;
+  el.classList.add("bump");
+  setTimeout(() => el.classList.remove("bump"), 300);
+}
+
+async function load() {
+  try {
+    const j = await (await fetch("/api/stats", {cache: "no-store"})).json();
+    set("pieces", j.pieces);
+    set("boxes", j.boxes);
+    for (const k of ["boys", "girls", "men", "women"]) set(k, j.cats[k]);
+    $("offline").style.display = "none";
+  } catch (e) { $("offline").style.display = "block"; }
+}
+
+// Double-click toggles fullscreen
+document.addEventListener("dblclick", () => {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else document.documentElement.requestFullscreen().catch(() => {});
+});
+
+load(); setInterval(load, 2000);
+</script>
+</body>
+</html>

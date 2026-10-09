@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#E1CDAD">
+<title>Clothes Counter</title>
+<link rel="icon" href="/assets/clothes_logo.png">
+<link rel="stylesheet" href="/web/style.css">
+<style>
+  .envelope { padding: 8px; }
+  .inner { padding: 10px; display: flex; flex-direction: column; gap: 10px; }
+  header.brand img.logo { height: 48px; }
+  header.brand img.stamp { height: 54px; }
+  header.brand h1 { font-size: 22px; }
+
+  .counts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .counts .tile .v { font-size: 26px; }
+
+  .cam {
+    position: relative; background: #111; border: 3px solid var(--ink);
+    border-radius: 12px; overflow: hidden; aspect-ratio: 3 / 4;
+  }
+  .cam video, .cam canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+  .cam .msg {
+    position: absolute; inset: auto 0 0 0; padding: 10px; text-align: center;
+    font-size: 20px; font-weight: 900; color: #fff; background: rgba(0,0,0,.55);
+  }
+  .cam .msg.hold { background: rgba(224,138,0,.85); }
+  .cam .msg.saved { background: rgba(46,125,50,.9); }
+  .cam .msg.error { background: rgba(214,27,45,.9); }
+
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+
+  .last { display: none; }
+  .last.show { display: block; }
+  .last .head { display: flex; justify-content: space-between; align-items: center; font-weight: 900; }
+  .last .num { font-size: 30px; font-weight: 900; color: var(--red); }
+  .last .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 6px 0; text-align: center; }
+  .last .grid div { background: #fff; border-radius: 8px; padding: 4px 0; font-weight: 900; }
+  .last .grid small { display: block; color: var(--ink-soft); font-size: 12px; }
+  .last.check { border-color: var(--warn); }
+  .warn { color: var(--warn); font-weight: 900; }
+
+  /* Edit / manual sheet */
+  .sheet {
+    position: fixed; inset: 0; background: rgba(30,27,24,.55); display: none;
+    align-items: flex-end; justify-content: center; z-index: 10;
+  }
+  .sheet.open { display: flex; }
+  .sheet .panel {
+    width: 100%; max-width: 560px; max-height: 94vh; overflow: auto;
+    background: var(--paper); border-radius: 16px 16px 0 0; padding: 14px;
+    border-top: 6px solid var(--blue);
+  }
+  .sheet h2 { margin: 0 0 6px; font-size: 22px; }
+  .label { font-weight: 900; font-size: 16px; margin: 8px 0 4px; }
+  .cats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .check { font-weight: 900; margin: 10px 0; }
+  .toast {
+    position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 20;
+    background: var(--green); color: #fff; padding: 10px 18px; border-radius: 10px;
+    font-weight: 900; display: none;
+  }
+  .hint { background: #fff8e6; border: 1px solid var(--warn); border-radius: 8px; padding: 8px; font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="envelope"><div class="inner">
+
+  <header class="brand">
+    <img class="logo" src="/assets/clothes_logo.png" alt="">
+    <div>
+      <h1>Clothes Counter</h1>
+      <div class="sub">Working Camp 2026</div>
+    </div>
+    <img class="stamp" src="/assets/clothes_stamp.png" alt="Minho Walaho">
+  </header>
+
+  <div class="counts">
+    <div class="tile"><div class="t">Pieces today</div><div class="v" id="todayPieces">0</div></div>
+    <div class="tile"><div class="t">Boxes today</div><div class="v" id="todayBoxes">0</div></div>
+  </div>
+
+  <input id="place" list="locList" dir="rtl" lang="ar" placeholder="📍 المكان — Location (Arabic)">
+  <datalist id="locList"></datalist>
+
+  <div class="cam" id="cam">
+    <video id="video" playsinline muted autoplay></video>
+    <canvas id="overlay"></canvas>
+    <div class="msg" id="msg">…</div>
+  </div>
+
+  <div class="card last" id="last">
+    <div class="head">
+      <span>Last box <span id="lastId"></span></span>
+      <button class="btn-plain" id="editBtn" style="padding:6px 12px">✏️ Edit</button>
+    </div>
+    <div class="num"><span id="lastTotal"></span> <small style="font-size:16px; color:var(--ink)">pieces</small></div>
+    <div class="grid" id="lastCats"></div>
+    <div class="warn" id="lastWarn"></div>
+  </div>
+
+  <div class="hint" id="hint" style="display:none"></div>
+  <div class="card" id="offCard" style="display:none; text-align:center">
+    <div style="font-weight:900; font-size:18px">⛔ Camera stopped from the dashboard</div>
+    <div class="muted" style="margin:6px 0 10px">Enter each box by hand until it's turned back on.</div>
+    <button class="btn-blue" style="width:100%" onclick="openSheet(null)">✍️ Enter a box</button>
+  </div>
+
+  <div class="row">
+    <button class="btn-blue" id="shootBtn">📷 Take photo now</button>
+    <button class="btn-plain" id="manualBtn">✍️ Manual entry</button>
+  </div>
+  <input type="file" id="fileInput" accept="image/*" capture="environment" hidden>
+  <div class="muted" id="tip">Hold the box in front of the camera — it reads and saves the numbers by itself.</div>
+</div></div>
+
+<!-- Edit / manual sheet -->
+<div class="sheet" id="sheet">
+  <div class="panel">
+    <h2 id="sheetTitle">Edit</h2>
+    <div class="label">Total</div>
+    <input id="f_total" type="number" inputmode="numeric" min="0" placeholder="Calculated from the boxes below">
+    <div class="cats" id="cats"></div>
+    <div class="label">Location</div>
+    <input id="f_location" list="locList" dir="rtl" lang="ar" placeholder="المكان">
+    <div class="check" id="check"></div>
+    <div class="row">
+      <button class="btn-blue" id="saveBtn">Save</button>
+      <button class="btn-plain" id="cancelBtn">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const CATS = [["boys","Boys"],["girls","Girls"],["men","Men"],["women","Women"]];
+const $ = id => document.getElementById(id);
+let cid = localStorage.getItem("cc_cid");
+if (!cid) { cid = Math.random().toString(36).slice(2, 12); localStorage.setItem("cc_cid", cid); }
+
+$("place").value = localStorage.getItem("cc_loc") || "";
+$("place").addEventListener("change", () => localStorage.setItem("cc_loc", $("place").value.trim()));
+const headers = extra => ({"X-Client": cid, "X-Location": encodeURIComponent($("place").value.trim()), ...extra});
+
+let sheetOpen = false, editId = null, lastBox = null, live = false;
+const video = $("video"), overlay = $("overlay"), grab = document.createElement("canvas");
+
+for (const [k, label] of CATS) {
+  $("cats").insertAdjacentHTML("beforeend",
+    `<div><div class="label">${label}</div><input id="f_${k}" type="number" inputmode="numeric" min="0" placeholder="—"></div>`);
+  $("f_" + k).addEventListener("input", updateCheck);
+}
+$("f_total").addEventListener("input", updateCheck);
+
+const show = v => (v === "" || v === null || v === undefined) ? "—" : v;
+
+// ---------- last saved box
+function showLast(b) {
+  lastBox = b;
+  $("lastId").textContent = "#" + b.id;
+  $("lastTotal").textContent = b.total;
+  $("lastCats").innerHTML = CATS.map(([k, l]) => `<div><small>${l}</small>${show(b[k])}</div>`).join("");
+  $("lastWarn").textContent = b.check ? "⚠ A number was unclear — check it and tap Edit if it's wrong" : "";
+  $("last").classList.add("show");
+  $("last").classList.toggle("check", !!b.check);
+}
+
+// ---------- edit / manual sheet
+function catsSum() { return CATS.reduce((s, [k]) => s + (+$("f_" + k).value || 0), 0); }
+// Total = the ticked number (30/40/50/other); empty = sum of the boxes
+function updateCheck() {
+  const cats = catsSum(), typed = +$("f_total").value || 0, el = $("check");
+  $("f_total").placeholder = cats ? `Ticked total (or ${cats} = sum)` : "Ticked total: 30 / 40 / 50 …";
+  const t = typed || cats;
+  if (typed && cats && typed !== cats) {
+    el.textContent = `⚠ Ticked total ${typed} ≠ sum of the boxes ${cats}`; el.style.color = "var(--red)";
+  } else { el.textContent = `Total: ${t} pieces`; el.style.color = t > 0 ? "var(--green)" : "var(--red)"; }
+}
+
+function openSheet(box) {
+  editId = box ? box.id : null;
+  $("sheetTitle").textContent = box ? `Edit box #${box.id}` : "Manual entry";
+  $("f_total").value = box ? box.total : "";
+  for (const [k] of CATS) $("f_" + k).value = box ? (box[k] ?? "") : "";
+  $("f_location").value = box ? (box.location || "") : $("place").value;
+  updateCheck();
+  sheetOpen = true;
+  $("sheet").classList.add("open");
+}
+function closeSheet() { sheetOpen = false; $("sheet").classList.remove("open"); }
+
+async function saveSheet() {
+  const body = {id: editId, total: +$("f_total").value || 0, location: $("f_location").value.trim()};
+  for (const [k] of CATS) body[k] = $("f_" + k).value.trim();
+  if (!body.total && !catsSum()) { toast("Enter a number", "var(--red)"); return; }
+  $("saveBtn").disabled = true;
+  try {
+    const url = editId ? "/api/update" : "/api/save";
+    const r = await fetch(url, {method: "POST", headers: headers({"Content-Type": "application/json"}), body: JSON.stringify(body)});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || "Not allowed");
+    closeSheet();
+    const box = {id: j.id, total: j.total, check: false, location: body.location};
+    for (const [k] of CATS) box[k] = body[k] === "" ? "" : +body[k];
+    showLast(box);
+    toast(editId ? `Box #${j.id} updated ✔` : `Box #${j.id} saved — ${j.total} pieces ✔`);
+    loadStats();
+  } catch (e) { toast(e.message, "var(--red)"); }
+  $("saveBtn").disabled = false;
+}
+
+$("saveBtn").onclick = saveSheet;
+$("cancelBtn").onclick = closeSheet;
+$("editBtn").onclick = () => lastBox && openSheet(lastBox);
+$("manualBtn").onclick = () => openSheet(null);
+
+// ---------- results from the laptop
+function handleResult(j) {
+  if (j.saved) {
+    showLast(j.saved);
+    setMsg(`Saved #${j.saved.id} — ${j.saved.total} pieces ✔`, "saved");
+    if (navigator.vibrate) navigator.vibrate(j.saved.check ? [80, 60, 80] : 120);
+    loadStats();
+  } else if (j.error) setMsg(j.error, "error");
+  else if (j.skipped) setMsg(j.skipped, "hold");
+}
+
+// ---------- live camera
+function setMsg(text, kind) { const m = $("msg"); m.textContent = text; m.className = "msg " + (kind || ""); }
+
+function drawQuad(q) {
+  const r = $("cam").getBoundingClientRect();
+  overlay.width = r.width; overlay.height = r.height;
+  const ctx = overlay.getContext("2d");
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+  if (!q || !video.videoWidth) return;
+  const s = Math.min(r.width / video.videoWidth, r.height / video.videoHeight);
+  const ox = (r.width - video.videoWidth * s) / 2, oy = (r.height - video.videoHeight * s) / 2;
+  ctx.strokeStyle = "#E08A00"; ctx.lineWidth = 5; ctx.beginPath();
+  q.forEach(([x, y], i) => { const px = ox + x * video.videoWidth * s, py = oy + y * video.videoHeight * s; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+  ctx.closePath(); ctx.stroke();
+}
+
+function frameBlob(maxSide, quality) {
+  const vw = video.videoWidth, vh = video.videoHeight, s = Math.min(1, maxSide / Math.max(vw, vh));
+  grab.width = Math.round(vw * s); grab.height = Math.round(vh * s);
+  grab.getContext("2d").drawImage(video, 0, 0, grab.width, grab.height);
+  return new Promise(res => grab.toBlob(res, "image/jpeg", quality));
+}
+
+let msgHoldUntil = 0, lastState = "search";
+async function loop() {
+  if (!live || sheetOpen || document.hidden || video.readyState < 2) { setTimeout(loop, 250); return; }
+  try {
+    // small, light frames while searching; full detail once the box is steady
+    const steady = lastState === "hold";
+    const blob = await frameBlob(steady ? 1600 : 960, steady ? 0.88 : 0.7);
+    const r = await fetch("/api/frame", {method: "POST", headers: headers({"Content-Type": "image/jpeg"}), body: blob});
+    const j = await r.json();
+    lastState = j.state;
+    drawQuad(j.quad);
+    if (j.saved || j.error || j.skipped) { handleResult(j); msgHoldUntil = Date.now() + 2500; }
+    else if (Date.now() > msgHoldUntil) setMsg(j.message, j.state);
+  } catch (e) { setMsg("No connection to the laptop", "error"); }
+  setTimeout(loop, 120);
+}
+
+// ---------- camera on/off from the dashboard
+let cameraAllowed = true, looping = false;
+
+function stopCamera() {
+  live = false;
+  const st = video.srcObject;
+  if (st) st.getTracks().forEach(t => t.stop());
+  video.srcObject = null;
+}
+
+function applyCameraSetting(allowed) {
+  if (allowed === cameraAllowed) return;
+  cameraAllowed = allowed;
+  $("cam").style.display = allowed ? "" : "none";
+  $("shootBtn").style.display = allowed ? "" : "none";
+  $("manualBtn").style.display = allowed ? "" : "none";
+  $("tip").style.display = allowed ? "" : "none";
+  $("offCard").style.display = allowed ? "none" : "block";
+  if (!allowed) $("hint").style.display = "none";
+  if (allowed) startCamera();
+  else { stopCamera(); toast("Camera stopped from the dashboard — manual entry", "var(--red)"); }
+}
+
+async function startCamera() {
+  if (!cameraAllowed) return;
+  if (!window.isSecureContext || !navigator.mediaDevices) {
+    $("hint").style.display = "block";
+    $("hint").textContent = "Live camera needs an https link. Use “Take photo now” for each box.";
+    setMsg("Use the photo button", "");
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {facingMode: {ideal: "environment"}, width: {ideal: 1920}, height: {ideal: 1080}}
+    });
+    if (!cameraAllowed) { stream.getTracks().forEach(t => t.stop()); return; }
+    video.srcObject = stream; await video.play();
+    live = true; setMsg("Point the camera at the sticker", "search");
+    if (!looping) { looping = true; loop(); }
+  } catch (e) {
+    $("hint").style.display = "block";
+    $("hint").textContent = "Couldn't open the camera (" + e.name + "). Allow camera access in the browser, or use “Take photo now”.";
+    setMsg("Camera blocked", "error");
+  }
+}
+
+// ---------- still photo
+async function sendPhoto(blob) {
+  setMsg("Reading the sticker…", "hold");
+  const fd = new FormData(); fd.append("photo", blob, "photo.jpg");
+  try {
+    const r = await fetch("/api/photo", {method: "POST", headers: headers(), body: fd});
+    handleResult(await r.json());
+    msgHoldUntil = Date.now() + 2500;
+  } catch (e) { setMsg("No connection to the laptop", "error"); }
+}
+
+$("shootBtn").onclick = async () => {
+  if (live && video.readyState >= 2) sendPhoto(await frameBlob(2000, 0.92));
+  else $("fileInput").click();
+};
+$("fileInput").onchange = e => { const f = e.target.files[0]; if (f) sendPhoto(f); e.target.value = ""; };
+
+// ---------- misc
+let toastTimer;
+function toast(text, color) {
+  const t = $("toast"); t.textContent = text; t.style.background = color || "var(--green)";
+  t.style.display = "block"; clearTimeout(toastTimer); toastTimer = setTimeout(() => t.style.display = "none", 2600);
+}
+
+async function loadStats() {
+  try {
+    const j = await (await fetch("/api/stats", {headers: {"X-Client": cid}})).json();
+    $("todayPieces").textContent = j.today.pieces.toLocaleString("en");
+    $("todayBoxes").textContent = j.today.boxes.toLocaleString("en");
+    $("locList").innerHTML = j.locations.map(l => `<option value="${l.replace(/"/g, "&quot;")}">`).join("");
+    applyCameraSetting(j.config.phone_camera !== false);
+  } catch (e) {}
+}
+
+fetch("/api/hello", {method: "POST", headers: headers({"Content-Type": "application/json"}), body: "{}"}).catch(() => {});
+// Ask the laptop first, so the camera never flashes on when it is switched off
+loadStats().then(() => { if (cameraAllowed) startCamera(); });
+setInterval(loadStats, 3000);
+</script>
+</body>
+</html>

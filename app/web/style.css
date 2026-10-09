@@ -1,0 +1,101 @@
+/* No web fonts: phones on a local Wi-Fi may have no internet */
+:root {
+  --kraft: #E1CDAD;
+  --kraft-dark: #C9B08A;
+  --paper: #F6EEDF;
+  --ink: #1E1B18;
+  --ink-soft: #5B4E3C;
+  --red: #D61B2D;
+  --blue: #055F9E;
+  --green: #2E7D32;
+  --warn: #E08A00;
+  --band: 12px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  min-height: 100%;
+  background: #fff;
+  color: var(--ink);
+  font-family: "Cairo", "Tajawal", "Segoe UI", Tahoma, "Noto Sans Arabic", sans-serif;
+}
+
+/* Airmail envelope border, like the sticker */
+.envelope {
+  min-height: 100vh;
+  border: var(--band) solid transparent;
+  border-image: repeating-linear-gradient(
+      -45deg,
+      var(--red) 0 14px, #fff 14px 22px,
+      var(--blue) 22px 36px, #fff 36px 44px) 12;
+  background: var(--kraft);
+  padding: 14px;
+}
+
+.inner {
+  border: 2px solid var(--ink-soft);
+  border-radius: 4px;
+  min-height: calc(100vh - 2 * var(--band) - 28px);
+  padding: 14px;
+}
+
+header.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+header.brand img.logo { height: 64px; }
+header.brand img.stamp { height: 74px; margin-inline-start: auto; }
+header.brand h1 { margin: 0; font-size: 26px; font-weight: 900; line-height: 1.1; }
+header.brand .sub { font-size: 13px; font-weight: 800; color: var(--ink-soft); }
+
+.card {
+  background: var(--paper);
+  border: 2px dashed var(--ink-soft);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+
+.tile {
+  background: #fff;
+  border: 1px solid var(--kraft-dark);
+  border-radius: 10px;
+  padding: 8px;
+  text-align: center;
+}
+.tile .t { font-size: 14px; font-weight: 800; color: var(--ink-soft); }
+.tile .v { font-size: 30px; font-weight: 900; }
+
+button, .btn {
+  font: inherit;
+  font-weight: 900;
+  border: 0;
+  border-radius: 10px;
+  padding: 12px 16px;
+  cursor: pointer;
+  font-size: 16px;
+}
+.btn-blue { background: var(--blue); color: #fff; }
+.btn-plain { background: #fff; color: var(--ink); border: 1px solid var(--kraft-dark); }
+.btn-red { background: #fff; color: var(--red); border: 2px solid var(--red); }
+button:disabled { opacity: .5; }
+
+input, select {
+  font: inherit;
+  font-weight: 800;
+  font-size: 18px;
+  background: #fff;
+  border: 1px solid var(--kraft-dark);
+  border-radius: 8px;
+  padding: 8px 10px;
+  width: 100%;
+  color: var(--ink);
+}
+
+.ok { border: 2px solid var(--green) !important; }
+.maybe { border: 2px solid var(--warn) !important; }
+.bad { border: 2px solid var(--red) !important; }
+
+.muted { color: var(--ink-soft); font-size: 13px; }
