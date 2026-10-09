@@ -1,2 +1,2 @@
-# Windows batch files must keep CRLF line endings (labels/goto break with LF)
-*.bat text eol=crlf
+# Windows batch files are stored exactly as-is (CRLF); labels/goto break with LF
+*.bat -text
