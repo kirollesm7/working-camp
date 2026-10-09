@@ -407,7 +407,11 @@ class DigitReader:
         # English handwriting keeps its real strokes (small loops stay
         # open); Arabic, learned from fonts, reads better thinned.
         NORM_THIN = style == "arabic"
-        self.hog = cv2.HOGDescriptor((28, 28), (14, 14), (7, 7), (7, 7), 9)
+        # OpenCV 5 moved HOG and the ML module out of the main package;
+        # without them the classic reader is skipped and the CNN reads alone.
+        self.classic_ok = hasattr(cv2, "HOGDescriptor") and hasattr(cv2, "ml")
+        self.hog = (cv2.HOGDescriptor((28, 28), (14, 14), (7, 7), (7, 7), 9)
+                    if self.classic_ok else None)
         self.knn = None
         self.train()
 
@@ -551,6 +555,15 @@ class DigitReader:
 
     def train(self):
         self._load_cnn()
+        if not self.classic_ok:
+            self.user_count = len(self._user_samples())
+            if self.cnn is None:
+                raise RuntimeError(
+                    "This OpenCV has no HOG/ML module and no CNN model was found. "
+                    "Install OpenCV 4: pip install \"opencv-python<5\"")
+            self.mode = "cnn"
+            print("Note: OpenCV without HOG/ML — reading digits with the CNN only.", flush=True)
+            return
         X, y = self._cached(f"digit_synth_{self.style}_v2{'' if NORM_THIN else '_raw'}.npz", self._synthetic)
 
         # Real handwriting for English digits (MNIST). The KNN gets all of

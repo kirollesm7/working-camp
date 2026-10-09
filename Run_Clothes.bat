@@ -5,8 +5,8 @@ cd /d "%~dp0app"
 
 call :find_python || goto :no_python
 
-rem First run on a new laptop: install the libraries the app needs
-%PY% -c "import flask, cv2, numpy, cryptography, openpyxl, PIL, PySide6" 1>nul 2>nul
+rem First run on a new laptop (or OpenCV 5, which lacks HOG/ML): install the right libraries
+%PY% -c "import flask, cv2, numpy, cryptography, openpyxl, PIL, PySide6; assert hasattr(cv2, 'HOGDescriptor') and hasattr(cv2, 'ml')" 1>nul 2>nul
 if errorlevel 1 (
   echo Installing the libraries the app needs - first run only, needs internet...
   %PY% -m pip install --upgrade -r "%~dp0requirements.txt"
