@@ -83,9 +83,10 @@ sessions = {}          # phone id -> Session
 saved_readings = {}    # box id -> reading (to learn from later fixes)
 box_owner = {}         # box id -> phone that saved it
 SIG_DIR = cc.DATA_DIR / "signatures"   # handwriting fingerprint per saved box
-SAME_BOX = 0.72        # fingerprint similarity above this = the same sticker
-                       # (same box twice: 0.83+, different boxes: 0.57 max)
+SAME_BOX = 0.76        # fingerprint similarity above this = the same sticker
+                       # (real photos: different stickers 0.68 max)
 MIN_INK = 150          # too little handwriting to tell boxes apart
+NEW_BOX = 0.85         # same box in the next frames: 0.95+; another box: 0.68 max
 signatures = {}        # box id -> fingerprint
 
 
@@ -117,6 +118,7 @@ class Session:
         self.history = []
         self.misses = 0
         self.last_center = None
+        self.last_sig = None
         self.seen = time.time()
         self.name = ""
 
@@ -150,7 +152,7 @@ class Session:
                 return "Hold the box steady…", None
             ref = self.history[-1][1]["corners"]
             moved = max(float(np.abs(h[1]["corners"] - ref).max()) for h in self.history)
-            if moved > 0.015 * diag:
+            if moved > 0.03 * diag:
                 return "Hold the box steady…", None
 
             best = max(
@@ -160,6 +162,8 @@ class Session:
             )
             canon = detector.warp(best[0], best[1]["H"])
             self.last_center = best[1]["corners"].mean(axis=0) / diag
+            # remember what this box looks like, to spot the next one
+            self.last_sig = cc.ink_signature(canon, detector.printed)[0]
             self.history = []
             self.state = self.REVIEW
             return "Captured ✔", canon
@@ -176,7 +180,16 @@ class Session:
                 if self.last_center is not None and np.hypot(*(c - self.last_center)) > 0.25:
                     self.state = self.SEARCH       # a new sticker slid in
                     return self.step(frame, det)
-            return "Remove the box and bring the next one", None
+                # A different box put in the same spot (phone on a stand,
+                # boxes swapped quickly): its handwriting doesn't match the
+                # box just saved, so read it now.
+                if self.last_sig is not None:
+                    with ENGINE_LOCK:
+                        sig, ink = cc.ink_signature(detector.warp(frame, det["H"]), detector.printed)
+                    if ink >= MIN_INK and cc.signature_similarity(sig, self.last_sig) < NEW_BOX:
+                        self.state = self.SEARCH
+                        return self.step(frame, det)
+            return "Saved ✔ — show the next box", None
 
         return "Check the numbers on the phone", None
 

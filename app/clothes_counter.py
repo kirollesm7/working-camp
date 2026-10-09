@@ -273,9 +273,15 @@ class StickerDetector:
         src = np.float32([self.kp_t[m.queryIdx].pt for m in good]) / self.scale
         dst = np.float32([kp[m.trainIdx].pt for m in good]) / fs
 
-        H, inliers = cv2.findHomography(src, dst, cv2.RANSAC, 6.0)
+        H, inliers = cv2.findHomography(src, dst, cv2.USAC_MAGSAC, 5.0)
         if H is None or int(inliers.sum()) < 20:
             return None
+        # Refit on every agreeing point: steadier corners from frame to
+        # frame (a robust fit alone uses few points and jitters).
+        keep = inliers.ravel().astype(bool)
+        H2, _ = cv2.findHomography(src[keep], dst[keep], 0)
+        if H2 is not None:
+            H = H2
 
         corners = cv2.perspectiveTransform(
             np.float32(
@@ -982,12 +988,38 @@ def ink_signature(cmin, printed):
     return np.concatenate(parts).astype(np.float32), amount
 
 
-def signature_similarity(a, b):
-    """Correlation of two fingerprints, -1..1 (1 = identical)."""
+def _corr(a, b):
     a = a - a.mean()
     b = b - b.mean()
     d = float(np.linalg.norm(a) * np.linalg.norm(b))
-    return float(a @ b) / d if d > 0 else 0.0
+    return float((a * b).sum()) / d if d > 0 else 0.0
+
+
+def signature_similarity(a, b):
+    """
+    How alike two fingerprints are, -1..1 (1 = identical). Each number
+    field is compared at small shifts (a photo is never lined up to the
+    pixel) and the best match counts; fields are weighted by their ink.
+    """
+    fa, fb = a.reshape(-1, 16, 40), b.reshape(-1, 16, 40)
+    if len(fa) != len(fb):
+        return _corr(a.ravel(), b.ravel())
+    total = weight = 0.0
+    for x, y in zip(fa, fb):
+        w = float(x.sum() + y.sum())
+        if w <= 0:
+            continue                       # both empty: says nothing
+        best = -1.0
+        for dy in (-2, -1, 0, 1, 2):
+            for dx in (-3, -2, -1, 0, 1, 2, 3):
+                ys = slice(max(0, dy), 16 + min(0, dy))
+                yt = slice(max(0, -dy), 16 + min(0, -dy))
+                xs = slice(max(0, dx), 40 + min(0, dx))
+                xt = slice(max(0, -dx), 40 + min(0, -dx))
+                best = max(best, _corr(x[ys, xs], y[yt, xt]))
+        total += best * w
+        weight += w
+    return total / weight if weight > 0 else 0.0
 
 
 def learn_from_boxes(reader, detector, rows, images_dir=None):
