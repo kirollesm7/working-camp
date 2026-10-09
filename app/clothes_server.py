@@ -46,8 +46,37 @@ app = Flask(__name__, static_folder=None)
 ENGINE_LOCK = threading.Lock()
 STATE_LOCK = threading.Lock()
 
+MNIST_URL = "https://storage.googleapis.com/cvdf-datasets/mnist/"
+MNIST_FILES = ["train-images-idx3-ubyte.gz", "train-labels-idx1-ubyte.gz"]
+
+
+def ensure_mnist():
+    """On a new laptop, fetch the handwritten-digit examples once (~10 MB).
+    Without them the reader still works, only weaker on handwriting."""
+    import urllib.request
+    base = cc.DATA_DIR / "mnist"
+    missing = [f for f in MNIST_FILES if not (base / f).exists()]
+    if not missing:
+        return
+    print("Downloading handwriting examples (first run only, ~10 MB)...", flush=True)
+    base.mkdir(parents=True, exist_ok=True)
+    for f in missing:
+        try:
+            tmp = base / (f + ".part")
+            urllib.request.urlretrieve(MNIST_URL + f, tmp)
+            tmp.replace(base / f)
+        except Exception as e:
+            print(f"  could not download {f} ({e}) — continuing without it", flush=True)
+            return
+
+
+print("Getting the sticker reader ready... (the first start on a new laptop "
+      "takes a few minutes — wait for the links)", flush=True)
+cc.DATA_DIR.mkdir(parents=True, exist_ok=True)
 detector = cc.StickerDetector(cv2.imread(str(cc.TEMPLATE_FILE)))
 config = cc.load_config()
+if config["digits"] == "english":
+    ensure_mnist()
 reader = cc.DigitReader(config["digits"])
 
 sessions = {}          # phone id -> Session

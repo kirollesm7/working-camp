@@ -1,0 +1,8 @@
+flask
+opencv-python
+numpy
+cryptography
+openpyxl
+pillow
+PySide6
+pyserial

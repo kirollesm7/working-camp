@@ -113,7 +113,7 @@ DEFAULT_CONFIG = {
     # "0" = laptop camera. Phone: IP Webcam -> http://<ip>:8080/video
     #                             DroidCam  -> http://<ip>:4747/video
     "camera": "0",
-    "digits": "arabic",          # arabic (٠١٢…) or english (012…)
+    "digits": "english",         # english (012…) or arabic (٠١٢…)
     "auto_save": False,          # save without review when every field is confident
     "phone_camera": True,        # False = phones stop the camera and use manual entry
 }
