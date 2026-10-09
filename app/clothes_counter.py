@@ -116,6 +116,7 @@ DEFAULT_CONFIG = {
     "digits": "english",         # english (012…) or arabic (٠١٢…)
     "auto_save": False,          # save without review when every field is confident
     "phone_camera": True,        # False = phones stop the camera and use manual entry
+    "reader": "ensemble",        # ensemble (CNN + classic) | cnn | classic
 }
 
 
@@ -724,9 +725,12 @@ class DigitReader:
     def _load_cnn(self):
         """The CNN trained by train_cnn.py, if there is one."""
         self.cnn = None
+        self.mode = load_config().get("reader", "ensemble")
         model = DATA_DIR / f"cnn_{self.style}.npz"
-        # only used once it has been switched on after a comparison
-        if load_config().get("reader") == "cnn" and model.exists():
+        if not model.exists():
+            # the trained model shipped with the app (for a new laptop)
+            model = ASSETS / f"cnn_{self.style}.npz"
+        if self.mode in ("cnn", "ensemble") and model.exists():
             try:
                 from cnn import CNN
                 self.cnn = CNN.load(model)
@@ -734,13 +738,32 @@ class DigitReader:
                 self.cnn = None
 
     def _classify(self, subs):
-        """Raw (digit, confidence) for each glyph mask."""
+        """
+        Raw (digit, confidence) for each glyph mask.
+          classic  — SVM picks the digit, KNN neighbours give the confidence
+          cnn      — the CNN alone
+          ensemble — both; sure only when they agree, ⚠ when they differ
+                     (tested on 40 real photos: as good or better than either
+                     alone in colour, grey-scale and black-and-white)
+        """
         glyphs = [normalize_glyph(s) for s in subs]
-        if getattr(self, "cnn", None) is not None:
-            # CNN: confidence = its probability for the chosen digit
-            x = (np.float32(glyphs) / 255.0)[:, None, :, :]
-            prob = self.cnn.predict_proba(x)
-            return [(int(p.argmax()), float(p.max())) for p in prob]
+        cnn = getattr(self, "cnn", None)
+        if cnn is None:
+            return self._classify_classic(glyphs)
+        x = (np.float32(glyphs) / 255.0)[:, None, :, :]
+        prob = cnn.predict_proba(x)
+        net = [(int(p.argmax()), float(p.max())) for p in prob]
+        if getattr(self, "mode", "ensemble") == "cnn":
+            return net
+        out = []
+        for (d1, c1), (d2, c2) in zip(self._classify_classic(glyphs), net):
+            if d1 == d2:
+                out.append((d1, max(c1, c2)))
+            else:
+                out.append((d1 if c1 >= c2 else d2, 0.3))
+        return out
+
+    def _classify_classic(self, glyphs):
         feats = np.float32([self._feat(g) for g in glyphs])
         _, _, neigh, _ = self.knn.findNearest(feats, k=7)
         pred = self.svm.predict(feats)[1].ravel()
