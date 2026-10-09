@@ -117,6 +117,7 @@ DEFAULT_CONFIG = {
     "auto_save": False,          # save without review when every field is confident
     "phone_camera": True,        # False = phones stop the camera and use manual entry
     "reader": "ensemble",        # ensemble (CNN + classic) | cnn | classic
+    "read_grey": True,           # read captures in grey-scale (more reliable)
 }
 
 
@@ -776,6 +777,38 @@ class DigitReader:
                 out.append((d1 if c1 >= c2 else d2, 0.3))
         return out
 
+    def _digit_probs(self, subs):
+        """Probability of each digit 0-9 for each glyph (CNN and KNN votes
+        averaged when both exist). Used to find the next-best readings."""
+        glyphs = [normalize_glyph(s) for s in subs]
+        parts = []
+        if getattr(self, "cnn", None) is not None:
+            parts.append(self.cnn.predict_proba((np.float32(glyphs) / 255.0)[:, None, :, :]))
+        if self.classic_ok and self.knn is not None:
+            feats = np.float32([self._feat(g) for g in glyphs])
+            _, _, neigh, _ = self.knn.findNearest(feats, k=7)
+            votes = np.zeros((len(glyphs), 10), np.float32)
+            for i, row in enumerate(neigh):
+                for d in row:
+                    votes[i, int(d)] += 1.0 / len(row)
+            parts.append(votes)
+        if not parts:
+            return np.full((len(glyphs), 10), 0.1, np.float32)
+        return np.mean(parts, axis=0) + 1e-4
+
+    def _alternatives(self, subs, best, top=8):
+        """Most likely readings of a field, best first: [(value, score)]."""
+        probs = self._digit_probs(subs)
+        beams = [("", 1.0)]
+        for p in probs:
+            cand = np.argsort(p)[::-1][:3]
+            beams = sorted(((b + str(d), sc * float(p[d])) for b, sc in beams for d in cand),
+                           key=lambda t: -t[1])[:top]
+        alts = [(int(b), sc) for b, sc in beams]
+        if best is not None and all(v != best for v, _ in alts):
+            alts.insert(0, (best, max(sc for _, sc in alts)))
+        return alts
+
     def _classify_classic(self, glyphs):
         feats = np.float32([self._feat(g) for g in glyphs])
         _, _, neigh, _ = self.knn.findNearest(feats, k=7)
@@ -849,7 +882,12 @@ class DigitReader:
             digits.append(d)
             confs.append(c)
 
-        return int("".join(map(str, digits))), min(confs), glyphs
+        value = int("".join(map(str, digits)))
+        try:
+            self.last_alts = self._alternatives([p[0] for p in pieces], value)
+        except Exception:
+            self.last_alts = [(value, 1.0)]
+        return value, min(confs), glyphs
 
     def learn(self, glyphs, value):
         """Store glyphs as samples when their count matches the digits."""
@@ -997,8 +1035,10 @@ def read_sticker(canon_bgr, detector, reader):
     out["cats"] = {}
     for key, _, rect in CATEGORIES:
         ink = field_ink(cmin, detector.printed, rect)
+        reader.last_alts = []
         v, c, g = reader.read(ink, rect[3] * INK_SCALE)
         out["cats"][key] = {"value": v, "conf": c, "glyphs": g,
+                            "alts": list(reader.last_alts) if g else [],
                             "crop": crop(canon_bgr, rect)}
 
     out["location_crop"] = crop(canon_bgr, LOCATION_FIELD)

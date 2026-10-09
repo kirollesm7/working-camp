@@ -14,6 +14,7 @@ engine) and sends the numbers back to the phone for a quick confirm.
 
 import io
 import os
+import itertools
 import json
 import time
 import uuid
@@ -131,7 +132,7 @@ class Session:
         if det is not None and not whole_sticker(det, frame):
             if self.state in (self.SEARCH, self.HOLD):
                 self.state, self.history = self.SEARCH, []
-                return "Move back — the whole sticker must be in the picture", None
+                return "Move back — the number boxes must be in the picture", None
 
         if self.state == self.SEARCH:
             if det:
@@ -147,12 +148,12 @@ class Session:
                     self.state = self.SEARCH
                 return "Hold the box steady…", None
             self.misses = 0
-            self.history = (self.history + [(frame, det)])[-4:]
-            if len(self.history) < 3:
+            self.history = (self.history + [(frame, det)])[-3:]
+            if len(self.history) < 2:
                 return "Hold the box steady…", None
             ref = self.history[-1][1]["corners"]
             moved = max(float(np.abs(h[1]["corners"] - ref).max()) for h in self.history)
-            if moved > 0.03 * diag:
+            if moved > 0.05 * diag:
                 return "Hold the box steady…", None
 
             best = max(
@@ -194,10 +195,15 @@ class Session:
         return "Check the numbers on the phone", None
 
 
-def whole_sticker(det, frame, margin=4):
-    """True when all four corners of the sticker are inside the frame."""
+# The part of the sticker that has to be in the picture: the tick boxes
+# and the four number boxes (the rest of the sticker may be cut off).
+NUMBERS_AREA = np.float32([[230, 480], [915, 480], [915, 660], [230, 660]]).reshape(-1, 1, 2)
+
+
+def whole_sticker(det, frame, margin=2):
+    """True when the tick boxes and number boxes are all inside the frame."""
     h, w = frame.shape[:2]
-    c = det["corners"]
+    c = cv2.perspectiveTransform(NUMBERS_AREA, det["H"]).reshape(-1, 2)
     return bool((c[:, 0] >= margin).all() and (c[:, 0] <= w - margin).all()
                 and (c[:, 1] >= margin).all() and (c[:, 1] <= h - margin).all())
 
@@ -262,26 +268,75 @@ def values_from_reading(r):
     # The total comes from the tick on the top boxes (٣٠ / ٤٠ / ٥٠, or a
     # number written on the dots). Without a clear tick it is the sum of
     # the numbers below; a tick that disagrees with them is flagged ⚠.
+    # The total is the SUM of the numbers written in the four boxes. The
+    # ticked box on top (٣٠/٤٠/٥٠ or a number on the dots) is the check:
+    # if the sum disagrees, the numbers are read again using their next
+    # most likely readings, looking for the combination that adds up.
     choice, other = r["total_choice"], r["other"]
     other_val = other["value"] if other["glyphs"] and other["value"] else 0
     clear_tick = r["total_conf"] >= 1.0
+    tick = None
     if clear_tick and choice in (30, 40, 50):
-        total = choice
+        tick = choice
     elif clear_tick and choice == "other" and other_val:
-        total = other_val
-        check |= other["conf"] < cc.CONF_OK
+        tick = other_val
     elif choice is not None and not clear_tick:
-        total, check = cats, True            # several boxes inked: unclear
-    elif other_val and not written:          # number on the dots, no tick
-        total, check = other_val, True
-    else:                                    # no tick: sum of the numbers
-        total = cats
+        check = True                         # several boxes inked: unclear
+    r["tick_total"] = tick
+    r["fixed"] = []
 
+    if tick is not None and cats != tick:
+        fixed = reread_to_match(r, values, tick)
+        if fixed:
+            for key, v in fixed.items():
+                if values.get(key) != v:
+                    r["fixed"].append(key)
+                values[key] = v
+            check = True                     # still ask about the changed ones
+            cats = sum(v for v in values.values() if v != "")
+
+    total = cats if cats else (tick or other_val)
     if total <= 0:
         return values, 0, check, "Couldn't read any number — take the photo again"
-    if cats and cats != total:
-        check = True
+    if tick is not None and total != tick:
+        check = True                         # sum and tick still disagree
     return values, total, check, None
+
+
+def reread_to_match(r, values, tick):
+    """Pick, for every written box, one of its likely readings so that they
+    add up to the ticked total; the most likely such combination wins."""
+    keys, options = [], []
+    for key, _, _ in cc.CATEGORIES:
+        c = r["cats"][key]
+        if not c["glyphs"]:
+            continue
+        if c["value"] is not None and c["conf"] >= cc.CONF_OK:
+            # read with confidence: never changed just to make a sum fit
+            # (the writer may have ticked the wrong box)
+            alts = [(c["value"], 1.0)]
+        else:
+            alts = [(v, sc) for v, sc in (c.get("alts") or []) if v is not None][:6]
+            if values.get(key, "") != "" and all(v != values[key] for v, _ in alts):
+                alts.insert(0, (values[key], 1.0))
+        if not alts:
+            return None
+        keys.append(key)
+        options.append(alts)
+    if not keys:
+        return None
+    best, best_score = None, 0.0
+    for combo in itertools.product(*options):
+        if sum(v for v, _ in combo) != tick:
+            continue
+        score = 1.0
+        for _, sc in combo:
+            score *= sc
+        if score > best_score:
+            best, best_score = combo, score
+    if best is None:
+        return None
+    return {k: v for k, (v, _) in zip(keys, best)}
 
 
 def store_box(values, total, check, location, source, reading=None, owner=""):
@@ -324,10 +379,40 @@ def store_box(values, total, check, location, source, reading=None, owner=""):
     return box_id
 
 
+def to_grey(img):
+    return cv2.cvtColor(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
+
+
+def unsure_fields(r, values, total):
+    """The numbers the reader isn't sure of, with their picture, so the
+    phone can ask about those only."""
+    out = []
+    tick = r.get("tick_total")
+    mismatch = tick is not None and total != tick
+    for key, label, rect in cc.CATEGORIES:
+        c = r["cats"][key]
+        unsure = c["glyphs"] and (c["value"] is None or c["conf"] < cc.CONF_OK)
+        if unsure or key in r.get("fixed", []) or (mismatch and c["glyphs"]):
+            out.append({"key": key, "label": label, "value": values.get(key, ""),
+                        "crop": jpeg_b64(cc.crop(r["image"], rect))})
+    tick_unclear = r["total_choice"] is not None and r["total_conf"] < 1.0
+    if tick_unclear or mismatch:
+        x0, y0 = cc.OTHER_FIELD[0], cc.CHECKBOXES[0][1][1]
+        x1 = cc.CHECKBOXES[0][1][0] + cc.CHECKBOXES[0][1][2]
+        out.append({"key": "total", "label": "Ticked total on top", "value": tick or total,
+                    "crop": jpeg_b64(cc.crop(r["image"], (x0, y0 - 12, x1 - x0, 58)))})
+    return out
+
+
 def auto_save(canon, session, location):
     """Read a straightened sticker and save it straight away."""
     with ENGINE_LOCK:
-        r = cc.read_sticker(canon, detector, reader)
+        if config.get("read_grey", True):
+            # colour photos fooled the reader; grey-scale reads reliably
+            r = cc.read_sticker(to_grey(canon), detector, reader)
+            r["image"] = canon                 # keep the colour photo to look at
+        else:
+            r = cc.read_sticker(canon, detector, reader)
 
     # The same sticker again (even much later, or after a restart)?
     if r.get("ink_amount", 0) >= MIN_INK and signatures:
@@ -345,7 +430,10 @@ def auto_save(canon, session, location):
 
     box_id = store_box(values, total, check, location, "camera", r, session.cid)
     return {"saved": {"id": box_id, "total": total, "check": check,
-                      "location": location, **values}}
+                      "location": location, "ticked": False,
+                      "tick_total": r.get("tick_total"), "fixed": r.get("fixed", []),
+                      "unsure": unsure_fields(r, values, total) if check else [],
+                      **values}}
 
 
 def learn_from(r, values):
